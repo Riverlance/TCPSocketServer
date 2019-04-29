@@ -1,7 +1,6 @@
 package com.tcpsocketserver;
 
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -11,7 +10,6 @@ import android.widget.Toast;
 
 import com.tcpsocketserver.tcpsocketserver.R;
 
-import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -39,6 +37,7 @@ public class MainActivity extends AppCompatActivity {
     public EditText onlineUsersEditText;
 
     public static Map<String, User> usersMap = new HashMap<>();
+    private static Thread protocolParserThread, ticksThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,29 +54,33 @@ public class MainActivity extends AppCompatActivity {
 
         loadDefaultValues();
 
-        Thread thread = new Thread(new ProtocolParser(this));
-        thread.start();
+        if (protocolParserThread == null) {
+            protocolParserThread = new Thread(new ProtocolParser(this));
+            protocolParserThread.start();
+        }
 
         // Executes periodically, once per second
-        Thread ticksThread = new Thread() {
-            @Override
-            public void run() {
-                while (!isInterrupted()) {
-                    try {
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                onTick();
-                            }
-                        });
-                        Thread.sleep(1000);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
+        if (ticksThread == null) {
+            ticksThread = new Thread() {
+                @Override
+                public void run() {
+                    while (!isInterrupted()) {
+                        try {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    onTick();
+                                }
+                            });
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            interrupt();
+                        }
                     }
                 }
-            }
-        };
-        ticksThread.start();
+            };
+            ticksThread.start();
+        }
     }
 
     private void onTick() {
@@ -100,10 +103,7 @@ public class MainActivity extends AppCompatActivity {
     public void onLogin(String username, String clientIP, long lastActionTime) {
         // Registering user into server data, without overwriting it
         if (!usersMap.containsKey(username)) {
-            User user = new User();
-            user.username = username;
-            user.ip = clientIP;
-            user.lastActionTime = lastActionTime;
+            User user = new User(username, clientIP, lastActionTime);
             MainActivity.usersMap.put(user.username, user);
         }
 

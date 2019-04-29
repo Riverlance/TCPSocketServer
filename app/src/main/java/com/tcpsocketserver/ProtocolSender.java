@@ -7,7 +7,6 @@ import android.os.Handler;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.net.ConnectException;
 import java.net.Socket;
 import java.util.HashMap;
 import java.util.Map;
@@ -17,22 +16,22 @@ public class ProtocolSender extends AsyncTask<String, Void, String> { // <Params
 
     Handler handler = new Handler();
 
-    Map<String, User> usersMap = new HashMap<>();
+    Map<String, User> users = new HashMap<>();
 
     // Directly to an user
     public ProtocolSender(User user) {
         sp = MainActivity.mainActivity.getSharedPreferences(MainActivity.APP_NAME, Context.MODE_PRIVATE);
 
-        usersMap.put(user.username, user);
+        users.put(user.username, user);
     }
 
     // For all connected users
-    public ProtocolSender(Context context, Map<String, User> usersMap) {
-        sp = context.getSharedPreferences(MainActivity.APP_NAME, Context.MODE_PRIVATE);
+    public ProtocolSender(Map<String, User> users) {
+        sp = MainActivity.mainActivity.getSharedPreferences(MainActivity.APP_NAME, Context.MODE_PRIVATE);
 
         handler = new Handler();
 
-        this.usersMap = usersMap;
+        this.users = users;
     }
 
     @Override
@@ -41,20 +40,29 @@ public class ProtocolSender extends AsyncTask<String, Void, String> { // <Params
         short opcode = Short.parseShort(strings[0]);
 
         try {
-            for (Map.Entry<String, User> entry : usersMap.entrySet()) {
-                String key = entry.getKey();
-                User user = entry.getValue();
+            for (Map.Entry<String, User> targetEntry : users.entrySet()) {
+                String targetKey = targetEntry.getKey();
+                User targetUser = targetEntry.getValue();
 
-                Socket socket = new Socket(user.ip, port);
+                Socket socket = new Socket(targetUser.ip, port);
                 DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
 
                 dataOutputStream.writeShort(opcode);
-                dataOutputStream.writeUTF(user.username);
+                dataOutputStream.writeUTF(targetUser.username);
+
                 if (opcode == MainActivity.OPCODE_STC_CONNECT) {
-                    dataOutputStream.writeUTF(user.ip);
-                    dataOutputStream.writeLong(user.lastActionTime);
+                    // Do nothing else
+
                 } else if (opcode == MainActivity.OPCODE_STC_DISCONNECT) {
-                    // Do nothing else, its just a signal
+                    // Do nothing else
+
+                } else if (opcode == MainActivity.OPCODE_STC_USERSMAPSIGNAL) {
+                    dataOutputStream.writeInt(MainActivity.usersMap.size());
+                    for (Map.Entry<String, User> entry : MainActivity.usersMap.entrySet()) {
+                        String key = targetEntry.getKey();
+                        User user = targetEntry.getValue();
+                        dataOutputStream.writeUTF(user.username);
+                    }
                 }
 
                 dataOutputStream.close();

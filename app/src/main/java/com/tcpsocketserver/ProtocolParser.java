@@ -76,10 +76,25 @@ public class ProtocolParser implements Runnable {
                             MainActivity.mainActivity.onLogout(username);
                         }
                     });
+
                 } else if (opcode == MainActivity.OPCODE_CTS_USERSMAPSIGNAL) {
-                    // to do
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            User user = MainActivity.usersMap.get(username);
+                            if (user != null) {
+                                ProtocolSender protocolSender = new ProtocolSender(user);
+                                protocolSender.execute(String.format("%d", MainActivity.OPCODE_STC_USERSMAPSIGNAL));
+                            }
+                        }
+                    });
                 }
             }
+
+            // Never happens because Server is always listening
+            // dataInputStream.close();
+            // serverSocket.close();
+
         } catch (IOException e) {
             e.printStackTrace();
         }
