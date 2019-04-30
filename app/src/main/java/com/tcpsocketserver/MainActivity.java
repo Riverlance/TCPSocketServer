@@ -181,7 +181,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-
     public void loadDefaultValues() {
         ipEditText.setText(Utils.getIPAddress(true));
         portEditText.setText(String.format("%d", sp.getInt("port", DEFAULT_PORT)));
