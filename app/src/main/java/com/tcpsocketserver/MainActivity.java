@@ -10,55 +10,52 @@ import android.widget.Toast;
 
 import com.tcpsocketserver.tcpsocketserver.R;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Calendar;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class MainActivity extends AppCompatActivity {
+    // Constants
     public static final String APP_NAME = "TCP Socket Server";
     public static final int DEFAULT_PORT = 7171;
-    public static final int DEFAULT_TIMETOKICK = 10000;
-
+    public static final int DEFAULT_TIMETOKICK = 20000; // Has a copy on client
     // Opcodes (Operation Codes)
     // CTS - Client to Server
-    public static final short OPCODE_CTS_CONNECT = 1;
-    public static final short OPCODE_CTS_DISCONNECT = 2;
-    public static final short OPCODE_CTS_USERSMAPSIGNAL = 3;
+    public static final short OPCODE_CTS_SELFCONNECT = 1; // Request
+    public static final short OPCODE_CTS_SELFDISCONNECT = 2; // Request
+    public static final short OPCODE_CTS_UPDATEDUSERSLIST = 3; // Request
     // STC - Server to Client
-    public static final short OPCODE_STC_CONNECT = 1;
-    public static final short OPCODE_STC_DISCONNECT = 2;
-    public static final short OPCODE_STC_USERSMAPSIGNAL = 3;
+    public static final short OPCODE_STC_SELFCONNECT = 1; // Answer
+    public static final short OPCODE_STC_SELFDISCONNECT = 2; // Answer
+    public static final short OPCODE_STC_UPDATEDUSERSLIST = 3; // Answer
+    public static final short OPCODE_STC_FRIENDLOGGEDIN = 4; // Broadcast to friends that self logged in
+    public static final short OPCODE_STC_FRIENDLOGGEDOUT = 5; // Broadcast to friends that self logged out
 
+    // Needed stuffs
     public static MainActivity mainActivity;
     private SharedPreferences sp;
     private SharedPreferences.Editor spe;
+    public static ConcurrentHashMap<String, User> usersMap = new ConcurrentHashMap<>();
+    private static Thread protocolParserThread, ticksThread;
 
+    // Views
     public EditText ipEditText;
     public EditText portEditText;
     public EditText onlineUsersEditText;
-
-    public static Map<String, User> usersMap = new HashMap<>();
-    private static Thread protocolParserThread, ticksThread;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        // Needed stuffs
         mainActivity = this;
         sp = getSharedPreferences(APP_NAME, Context.MODE_PRIVATE);
         spe = sp.edit();
-
-        ipEditText = findViewById(R.id.ipEditText);
-        portEditText = findViewById(R.id.portEditText);
-        onlineUsersEditText = findViewById(R.id.onlineUsersEditText);
-
-        loadDefaultValues();
-
+        // Server listening client
         if (protocolParserThread == null) {
             protocolParserThread = new Thread(new ProtocolParser(this));
             protocolParserThread.start();
         }
-
         // Executes periodically, once per second
         if (ticksThread == null) {
             ticksThread = new Thread() {
@@ -81,18 +78,29 @@ public class MainActivity extends AppCompatActivity {
             };
             ticksThread.start();
         }
+
+        // Views
+        ipEditText = findViewById(R.id.ipEditText);
+        portEditText = findViewById(R.id.portEditText);
+        onlineUsersEditText = findViewById(R.id.onlineUsersEditText);
+        loadDefaultValues();
     }
 
     private void onTick() {
-        long time = System.currentTimeMillis();
+        // Current time
+        long time = System.currentTimeMillis(); // ms
+        int timeInSec = (int) (time / 1000); // sec
 
-        for (Map.Entry<String, User> entry : usersMap.entrySet()) {
-            String key = entry.getKey();
-            User user = entry.getValue();
+        // Each 5 seconds
+        if (timeInSec % 5 == 0) {
+            for (ConcurrentHashMap.Entry<String, User> entry : usersMap.entrySet()) {
+                String key = entry.getKey();
+                User user = entry.getValue();
 
-            // If elapsed time > DEFAULT_TIMETOKICK, kick user
-            if (time - user.lastActionTime > DEFAULT_TIMETOKICK) {
-                onLogout(key);
+                // If elapsed time > DEFAULT_TIMETOKICK, kick user
+                if (time - user.lastActionTime > DEFAULT_TIMETOKICK) {
+                    logout(key);
+                }
             }
         }
 
@@ -100,38 +108,65 @@ public class MainActivity extends AppCompatActivity {
         onlineUsersEditText.setText(String.format("%d", usersMap.size()));
     }
 
-    public void onLogin(String username, String clientIP, long lastActionTime) {
-        // Registering user into server data, without overwriting it
-        if (!usersMap.containsKey(username)) {
-            User user = new User(username, clientIP, lastActionTime);
-            MainActivity.usersMap.put(user.username, user);
-        }
+    public void login(String username, String clientIP) {
+        User user;
+        long lastActionTime = System.currentTimeMillis();
 
-        User user = usersMap.get(username);
+        // Signal to client of friends
+        ProtocolSender protocolSender1 = new ProtocolSender(username);
+        protocolSender1.execute(String.format("%d", MainActivity.OPCODE_STC_FRIENDLOGGEDIN), username);
+
+        if (!usersMap.containsKey(username)) {
+            // Registering user into server data, without overwriting it
+            user = new User(username, clientIP, lastActionTime);
+            MainActivity.usersMap.put(username, user);
+        } else {
+            // Get user
+            user = usersMap.get(username);
+        }
         if (user == null) {
-            return;
+            return; // Never happens
         }
 
         // Signal to client
-        ProtocolSender protocolSender = new ProtocolSender(user);
-        protocolSender.execute(String.format("%d", OPCODE_STC_CONNECT));
+        ProtocolSender protocolSender2 = new ProtocolSender(user);
+        protocolSender2.execute(String.format("%d", OPCODE_STC_SELFCONNECT));
+
+        /* Other */
+        final Calendar calendar = Calendar.getInstance(); // Last action time
+        calendar.setTimeInMillis(lastActionTime);
+        final int hour = calendar.get(Calendar.HOUR_OF_DAY);
+        final int minute = calendar.get(Calendar.MINUTE);
+        final int day = calendar.get(Calendar.DAY_OF_MONTH);
+        final int month = calendar.get(Calendar.MONTH);
+        final int year = calendar.get(Calendar.YEAR);
+
+        final int port = sp.getInt("port", MainActivity.DEFAULT_PORT);
+        //Toast.makeText(context, String.format("%s:%s/~%s : %s %02d:%02d-%02d/%02d/%04d", clientIP, port, username, message, hour, minute, day, month, year), Toast.LENGTH_LONG).show();
+        //Toast.makeText(context, String.format("%s:%s/~%s : %02d:%02d-%02d/%02d/%04d", clientIP, port, username, hour, minute, day, month, year), Toast.LENGTH_LONG).show();
+        //System.out.println(String.format("%s:%s/~%s : %02d:%02d-%02d/%02d/%04d", clientIP, port, username, hour, minute, day, month, year));
 
         // Server Log
         Toast.makeText(getApplicationContext(), String.format("%s iniciou a sessao.", username), Toast.LENGTH_SHORT).show();
     }
 
-    public void onLogout(String username) {
-
+    public void logout(String username) {
+        // Get user
         User user = usersMap.get(username);
         if (user == null) {
             return;
         }
-        // Remove from list
+
+        // Remove user from map
         usersMap.remove(username);
 
         // Signal to client
-        ProtocolSender protocolSender = new ProtocolSender(user);
-        protocolSender.execute(String.format("%d", OPCODE_STC_DISCONNECT));
+        ProtocolSender protocolSender1 = new ProtocolSender(user);
+        protocolSender1.execute(String.format("%d", OPCODE_STC_SELFDISCONNECT));
+
+        // Signal to client of friends
+        ProtocolSender protocolSender2 = new ProtocolSender(username);
+        protocolSender2.execute(String.format("%d", MainActivity.OPCODE_STC_FRIENDLOGGEDOUT), username);
 
         // Server Log
         Toast.makeText(this, String.format("%s encerrou a sessao.", user.username), Toast.LENGTH_SHORT).show();
